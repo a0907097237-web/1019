@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>C字動態反應測驗</title>
+<style>
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: Arial, "Microsoft JhengHei", sans-serif;
+    background: #f4f7f6;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+}
+
+.container {
+    width: 100%;
+    max-width: 600px;
+    padding: 35px;
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+    text-align: center;
+}
+
+h1 { color: #2c3e50; }
+
+p {
+    color: #555;
+    font-size: 18px;
+    line-height: 1.8;
+}
+
+button {
+    padding: 15px 30px;
+    margin-top: 15px;
+    border: 0;
+    border-radius: 8px;
+    background: #3498db;
+    color: white;
+    font-size: 20px;
+    cursor: pointer;
+}
+
+.hidden { display: none !important; }
+
+#game-area {
+    position: fixed;
+    inset: 0;
+    display: none;
+    overflow: hidden;
+    background: #061a36;
+}
+
+#question-counter {
+    position: absolute;
+    top: 20px;
+    left: 24px;
+    color: white;
+    font-size: 24px;
+    font-weight: bold;
+}
+
+#countdown-display {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: white;
+    font-size: 120px;
+    font-weight: bold;
+}
+
+#stimulus-display {
+    position: absolute;
+    width: 180px;
+    height: 180px;
+    transform: translate(-50%, -50%);
+}
+
+.key-hint {
+    display: inline-block;
+    margin: 4px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: #e0e0e0;
+    color: #333;
+    font-weight: bold;
+}
+
+#stats {
+    margin-top: 20px;
+    color: #e67e22;
+    font-size: 20px;
+    font-weight: bold;
+    line-height: 2;
+}
+</style>
+</head>
+<body>
+
+<div class="container" id="welcome-screen">
+    <h1>C字動態反應測驗</h1>
+    <p>
+        請判斷 C 字缺口的方向，並按下對應的方向鍵。<br><br>
+        <span class="key-hint">← 左</span>
+        <span class="key-hint">↑ 上</span>
+        <span class="key-hint">→ 右</span>
+        <span class="key-hint">↓ 下</span>
+        <br><br>
+        總共 20 題，每題作答後自動進入下一題。
+    </p>
+    <button id="start-button">開始測驗</button>
+</div>
+
+<div id="game-area">
+    <div id="question-counter">目前題數：0 / 20</div>
+    <div id="countdown-display" class="hidden">3</div>
+
+    <svg id="stimulus-display" class="hidden" viewBox="0 0 100 100">
+        <defs>
+            <mask id="c-mask">
+                <rect width="100" height="100" fill="black"/>
+                <circle cx="50" cy="50" r="40" fill="white"/>
+                <circle cx="50" cy="50" r="20" fill="black"/>
+                <rect x="60" y="40" width="30" height="20" fill="black"/>
+            </mask>
+        </defs>
+        <rect width="100" height="100" fill="white" mask="url(#c-mask)"/>
+    </svg>
+</div>
+
+<div class="container hidden" id="result-screen">
+    <h1>測驗結束</h1>
+    <p id="result-text">測驗完成，感謝您的參與。</p>
+    <div id="stats">
+        <div id="avg-time">平均反應時間：0 毫秒</div>
+        <div id="accuracy">正確率：0%</div>
+    </div>
+    <button id="restart-button">重新測驗</button>
+</div>
+
+<script>
+(function () {
+    "use strict";
+
+    const TOTAL_ROUNDS = 20;
+    const STIMULUS_DURATION = 800;
+
+    const directions = [
+        { rotation: 180, key: "ArrowLeft" },
+        { rotation: 270, key: "ArrowUp" },
+        { rotation: 0, key: "ArrowRight" },
+        { rotation: 90, key: "ArrowDown" }
+    ];
+
+    const welcomeScreen = document.getElementById("welcome-screen");
+    const gameArea = document.getElementById("game-area");
+    const resultScreen = document.getElementById("result-screen");
+    const counter = document.getElementById("question-counter");
+    const countdownDisplay = document.getElementById("countdown-display");
+    const stimulus = document.getElementById("stimulus-display");
+
+    let currentRound = 0;
+    let correctCount = 0;
+    let reactionTimes = [];
+    let currentStimulus = null;
+    let stimulusStartTime = 0;
+    let acceptingAnswer = false;
+    let gameRunning = false;
+    let timers = [];
+
+    function schedule(callback, delay) {
+        const id = setTimeout(function () {
+            timers = timers.filter(function (timer) {
+                return timer !== id;
+            });
+            callback();
+        }, delay);
+        timers.push(id);
+        return id;
+    }
+
+    function clearTimers() {
+        timers.forEach(function (id) {
+            clearTimeout(id);
+        });
+        timers = [];
+    }
+
+    function hideStimulus() {
+        stimulus.classList.add("hidden");
+    }
+
+    function startGame() {
+        clearTimers();
+
+        currentRound = 0;
+        correctCount = 0;
+        reactionTimes = [];
+        currentStimulus = null;
+        acceptingAnswer = false;
+        gameRunning = true;
+
+        welcomeScreen.classList.add("hidden");
+        resultScreen.classList.add("hidden");
+        gameArea.style.display = "block";
+
+        hideStimulus();
+        counter.textContent = "目前題數：0 / " + TOTAL_ROUNDS;
+
+        runCountdown();
+    }
+
+    function runCountdown() {
+        let count = 3;
+
+        countdownDisplay.textContent = "3";
+        countdownDisplay.classList.remove("hidden");
+
+        function tick() {
+            if (!gameRunning) return;
+
+            count--;
+
+            if (count > 0) {
+                countdownDisplay.textContent = String(count);
+                schedule(tick, 1000);
+            } else {
+                countdownDisplay.classList.add("hidden");
+                nextRound();
+            }
+        }
+
+        schedule(tick, 1000);
+    }
+
+    function nextRound() {
+        if (!gameRunning) return;
+
+        acceptingAnswer = false;
+        hideStimulus();
+
+        if (currentRound >= TOTAL_ROUNDS) {
+            endGame();
+            return;
+        }
+
+        currentRound++;
+        counter.textContent =
+            "目前題數：" + currentRound + " / " + TOTAL_ROUNDS;
+
+        const delay = 1000 + Math.random() * 1000;
+
+        schedule(function () {
+            showStimulus();
+        }, delay);
+    }
+
+    function showStimulus() {
+        if (!gameRunning) return;
+
+        const index = Math.floor(Math.random() * directions.length);
+        currentStimulus = directions[index];
+
+        const margin = 100;
+        const maxX = Math.max(margin, window.innerWidth - margin);
+        const maxY = Math.max(margin, window.innerHeight - margin);
+
+        const x = margin + Math.random() * (maxX - margin);
+        const y = margin + Math.random() * (maxY - margin);
+
+        stimulus.style.left = x + "px";
+        stimulus.style.top = y + "px";
+        stimulus.style.transform =
+            "translate(-50%, -50%) rotate(" +
+            currentStimulus.rotation + "deg)";
+
+        stimulus.classList.remove("hidden");
+
+        stimulusStartTime = performance.now();
+        acceptingAnswer = true;
+
+        schedule(function () {
+            if (!gameRunning || !acceptingAnswer) return;
+
+            acceptingAnswer = false;
+            hideStimulus();
+
+            schedule(nextRound, 200);
+        }, STIMULUS_DURATION);
+    }
+
+    function handleAnswer(event) {
+        if (!gameRunning || !acceptingAnswer) return;
+
+        const validKeys = [
+            "ArrowLeft",
+            "ArrowUp",
+            "ArrowRight",
+            "ArrowDown"
+        ];
+
+        if (!validKeys.includes(event.key)) return;
+
+        event.preventDefault();
+        acceptingAnswer = false;
+
+        const reactionTime = Math.round(
+            performance.now() - stimulusStartTime
+        );
+
+        if (event.key === currentStimulus.key) {
+            correctCount++;
+            reactionTimes.push(reactionTime);
+        }
+
+        hideStimulus();
+        schedule(nextRound, 200);
+    }
+
+    function endGame() {
+        clearTimers();
+
+        gameRunning = false;
+        acceptingAnswer = false;
+
+        hideStimulus();
+        countdownDisplay.classList.add("hidden");
+        gameArea.style.display = "none";
+        resultScreen.classList.remove("hidden");
+
+        const accuracy = Math.round(
+            correctCount / TOTAL_ROUNDS * 100
+        );
+
+        let averageTime = 0;
+
+        if (reactionTimes.length > 0) {
+            const sum = reactionTimes.reduce(function (a, b) {
+                return a + b;
+            }, 0);
+            averageTime = Math.round(sum / reactionTimes.length);
+        }
+
+        document.getElementById("avg-time").textContent =
+            "平均反應時間：" + averageTime + " 毫秒";
+
+        document.getElementById("accuracy").textContent =
+            "正確率：" + accuracy + "% (" +
+            correctCount + "/" + TOTAL_ROUNDS + ")";
+
+        document.getElementById("result-text").textContent =
+            "測驗完成，感謝您的參與。";
+    }
+
+    document.getElementById("start-button").addEventListener(
+        "click", startGame
+    );
+
+    document.getElementById("restart-button").addEventListener(
+        "click", startGame
+    );
+
+    document.addEventListener("keydown", handleAnswer);
+})();
+</script>
+
+</body>
+</html>
